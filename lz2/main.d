@@ -1,4 +1,5 @@
 import std.stdio;
+import std.string;
 import lz;
 
 size_t Read(void *context, ubyte *data, size_t size) {
@@ -13,8 +14,8 @@ enum BackSize = 0x10000;
 enum ForwardSize = 0x1000;
 
 void main(string[] args) {
-	FILE *input_file = fopen(cast(char *) args[1].ptr, cast(char *) "rb".ptr);
-	FILE *output_file = fopen(cast(char *) args[2].ptr, cast(char *) "wb".ptr);
+	FILE *input_file = fopen(toStringz(args[1]), toStringz("rb"));
+	FILE *output_file = fopen(toStringz(args[2]), toStringz("wb"));
 	
 	if (!input_file || !output_file) {
 		writeln("Failed to open file");
