@@ -25,6 +25,7 @@ void main(string[] args) {
 	InputStream input = new InputStream(&Read, cast(void *) input_file);
 	OutputStream output = new OutputStream(&Write, cast(void *) output_file);
 	
+	// copy(input, output);
 	compress(input, output, BackSize, ForwardSize);
 	
 	fclose(input_file);

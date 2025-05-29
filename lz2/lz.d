@@ -158,12 +158,66 @@ void write_ext_num(OutputStream output, size_t num) {
 	}
 }
 
-void compress(InputStream input, OutputStream output, size_t back_size, size_t forward_size) {
-	CyclicBuffer buffer = new CyclicBuffer(back_size + forward_size);
+void compress(InputStream input, OutputStream output, size_t back_size, size_t forward_target_size) {
+	CyclicBuffer buffer = new CyclicBuffer(back_size + forward_target_size);
 	
+	size_t forward_size = 0;
 	size_t literal_size = 0;
 	
+	// Queue in `forward_size` bytes
+	for (size_t i = 0; i < forward_target_size; i++) {
+		ushort b = input.readByte();
+		
+		if (b == EndOfFile) {
+			break;
+		}
+		else {
+			forward_size++;
+		}
+		
+		buffer.push(cast(ubyte) b);
+	}
+	
+	size_t literal_size = 0;
+	size_t split_point = 0;
+	
 	while (true) {
+		MatchInfo info = find_match(buffer, (back_size > buffer.length ? ));
+		
+		if (info.size > MinMatch) {
+			// Control byte
+			ubyte ctl = cast(ubyte) (((literal_size > 14 ? 15 : literal_size) << 4) | (info.size > 14 ? 15 : info.size));
+			output.writeByte(ctl);
+			
+			// Rest of literal length
+			write_ext_num(output, literal_size);
+			
+			// Flush literal
+			write_literals(buffer, output, back_size - literal_size, back_size);
+			literal_size = 0;
+			
+			// Rest of match size
+			write_ext_num(output, info.size);
+			
+			// Match offset
+			output.writeShort(cast(ubyte) info.dist);
+		}
+		else {
+			literal_size++;
+			
+			// Dump literals in buffer when we're out of buffer space
+			if (literal_size >= back_size) {
+				output.writeByte(cast(ubyte) (((literal_size > 14) ? 15 : literal_size) << 4)); // Unless the lookback buffer is really small this is an okay assumption to make
+				write_ext_num(output, literal_size);
+				write_literals(buffer, output, back_size - literal_size, back_size);
+				output.writeShort(0);
+				literal_size = 0;
+			}
+		}
+		
+		split_point++;
+		
+		// Read another byte
 		ushort b = input.readByte();
 		
 		// Leave compression loop and move on to finialisation tasks
@@ -172,43 +226,5 @@ void compress(InputStream input, OutputStream output, size_t back_size, size_t f
 		}
 		
 		buffer.push(cast(ubyte) b);
-		
-		if (buffer.length > forward_size) {
-			MatchInfo info = find_match(buffer, buffer.length - forward_size, forward_size);
-			
-			if (info.size > MinMatch) {
-				// Control byte
-				ubyte ctl = cast(ubyte) (((literal_size > 14 ? 15 : literal_size) << 4) | (info.size > 14 ? 15 : info.size));
-				output.writeByte(ctl);
-				
-				// Rest of literal length
-				write_ext_num(output, literal_size);
-				
-				// Flush literal
-				write_literals(buffer, output, back_size - literal_size, back_size);
-				literal_size = 0;
-				
-				// Rest of match size
-				write_ext_num(output, info.size);
-				
-				// Match offset
-				output.writeShort(cast(ubyte) info.dist);
-			}
-			else {
-				literal_size++;
-				
-				// Dump literals in buffer when we're out of buffer space
-				if (literal_size >= back_size) {
-					output.writeByte(cast(ubyte) (((literal_size > 14) ? 15 : literal_size) << 4)); // Unless the lookback buffer is really small this is an okay assumption to make
-					write_ext_num(output, literal_size);
-					write_literals(buffer, output, back_size - literal_size, back_size);
-					output.writeShort(0);
-					literal_size = 0;
-				}
-			}
-		}
-		else {
-			literal_size++;
-		}
 	}
 }

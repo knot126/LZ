@@ -1,0 +1,185 @@
+#include <stdlib.h>
+#include <string.h>
+
+#ifndef byte_t
+#define byte_t unsigned char
+#endif
+
+#define plz_failure ((size_t) -1)
+
+static inline size_t plz_memcmp(byte_t *a, byte_t *b, size_t max_size) {
+	/**
+	 * Return the number of bytes that are equal at the start of buffers a and b.
+	 */
+	
+	for (size_t i = 0; i < max_size; i++) {
+		if (a[i] != b[i]) {
+			return i;
+		}
+	}
+	
+	return max_size;
+}
+
+struct plz_match {
+	size_t offset, len;
+};
+
+static inline struct plz_match plz_find_match(byte_t *back, size_t back_size, byte_t *front, size_t front_size) {
+	/**
+	 * Find a match (by simple linear search)
+	 */
+	
+	struct plz_match m = {0, 0};
+	
+	for (size_t i = 0; i < back_size; i++) {
+		const size_t search_size = (back_size - i < front_size) ? (back_size - i) : front_size;
+		const size_t match_size = plz_memcmp(&back[i], front, search_size);
+		
+		if (match_size > m.len) {
+			m.len = match_size;
+			m.offset = i;
+		}
+	}
+	
+	return m;
+}
+
+size_t plz_copy(byte_t *outbuf, size_t outsize, byte_t *inbuf, size_t insize) {
+	/**
+	 * Copy `insize` bytes from inbuf to outbuf (up to the amount that fits)
+	 */
+	
+	const size_t copied = insize > outsize ? outsize : insize;
+	
+	memcpy(outbuf, inbuf, copied);
+	
+	return (insize == copied) ? copied : plz_failure;
+}
+
+size_t plz_writeint(byte_t *outbuf, size_t outsize, unsigned long long num) {
+	/**
+	 * Write an leb128 encoded integer
+	 */
+	
+	size_t i = 0;
+	
+	do {
+		byte_t b = (num & 0x7f);
+		if (num >= 0x80) { b |= 0x80; }
+		num >>= 7;
+		if (outsize) {
+			outbuf[0] = b;
+			outbuf++;
+			outsize--;
+			i++;
+		}
+		else {
+			return plz_failure;
+		}
+	} while (num);
+	
+	return i;
+}
+
+#define WRITE_INT(I) {\
+	status = plz_writeint(outbuf + outpos, maxoutsize - outpos, I);\
+	\
+	if (status == plz_failure) {\
+		return plz_failure;\
+	}\
+	\
+	outpos += status;\
+}
+
+#define WRITE_LIT(I) {\
+	status = plz_copy(outbuf + outpos, maxoutsize - outpos, inbuf + I - lit_length, lit_length);\
+	\
+	if (status == plz_failure) {\
+		return plz_failure;\
+	}\
+	\
+	outpos += status;\
+	lit_length = 0;\
+}
+
+size_t plz_compress(byte_t *inbuf, size_t insize, byte_t *outbuf, size_t maxoutsize) {
+	/**
+	 * Compress the input block `inbuf` to the output buffer `outbuf`.
+	 */
+	
+	size_t lit_length = 0;
+	size_t outpos = 0;
+	size_t status;
+	
+	for (size_t i = 0; i < insize;) {
+		struct plz_match m = plz_find_match(inbuf, i, inbuf + i, insize - i);
+		
+		if (m.len >= 3) {
+			// Write number of literals
+			WRITE_INT(lit_length);
+			
+			// Write literals themselves
+			WRITE_LIT(i);
+			
+			// Write match length
+			WRITE_INT(m.len);
+			WRITE_INT(i - m.offset);
+			
+			i += m.len;
+		}
+		else {
+			lit_length += 1;
+			i++;
+		}
+	}
+	
+	// Write any remaining literals
+	if (lit_length) {
+		WRITE_LIT(insize);
+	}
+	
+	return outpos;
+}
+
+#ifdef PLZ_TEST
+#define FILE_UTILS_IMPLEMENTATION
+#include "FileUtils.h"
+
+int main(int argc, char *argv[]) {
+	if (argc < 3) {
+		fprintf(stderr, "Too few arguments.\n");
+		return 127;
+	}
+	
+	byte_t *in_data; size_t in_size;
+	
+	if (!FULoad(argv[1], (void **) &in_data, &in_size)) {
+		fprintf(stderr, "Could not open input file.\n");
+		return 1;
+	}
+	
+	byte_t *out_data = malloc(in_size);
+	
+	if (!out_data) {
+		fprintf(stderr, "Could not create buffer for storing output data.\n");
+		return 1;
+	}
+	
+	size_t out_size = plz_compress(in_data, in_size, out_data, in_size);
+	
+	if (out_size == plz_failure) {
+		fprintf(stderr, "Could not compress the input file, not trying anything else.\n");
+		return 1;
+	}
+	
+	fprintf(stderr, "Compressed %zu bytes to %zu bytes, %0.3f%% ratio.\n", in_size, out_size, 100.0f * (((float) out_size) / ((float) in_size)));
+	
+	if (!FUSave(argv[2], out_data, out_size)) {
+		fprintf(stderr, "Could not write to output file.\n");
+		return 1;
+	}
+	
+	return 0;
+}
+#endif
