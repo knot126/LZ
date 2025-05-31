@@ -45,7 +45,7 @@ static inline struct plz_match plz_find_match(byte_t *back, size_t back_size, by
 	return m;
 }
 
-size_t plz_copy(byte_t *outbuf, size_t outsize, byte_t *inbuf, size_t insize) {
+static size_t plz_copy(byte_t *outbuf, size_t outsize, byte_t *inbuf, size_t insize) {
 	/**
 	 * Copy `insize` bytes from inbuf to outbuf (up to the amount that fits)
 	 */
@@ -57,7 +57,7 @@ size_t plz_copy(byte_t *outbuf, size_t outsize, byte_t *inbuf, size_t insize) {
 	return (insize == copied) ? copied : plz_failure;
 }
 
-size_t plz_writeint(byte_t *outbuf, size_t outsize, unsigned long long num) {
+static size_t plz_writeint(byte_t *outbuf, size_t outsize, unsigned long long num) {
 	/**
 	 * Write an leb128 encoded integer
 	 */
@@ -137,6 +137,95 @@ size_t plz_compress(byte_t *inbuf, size_t insize, byte_t *outbuf, size_t maxouts
 	// Write any remaining literals
 	if (lit_length) {
 		WRITE_LIT(insize);
+	}
+	
+	return outpos;
+}
+
+#undef WRITE_INT
+#undef WRITE_LIT
+
+static inline size_t plz_dcopy(byte_t *src, size_t src_size, byte_t *dest, size_t dest_size) {
+	/**
+	 * Copy `dest_size` bytes to dest, wrapping around if needed.
+	 */
+	
+	size_t i;
+	
+	for (i = 0; i < dest_size; i++) {
+		dest[i] = src[i % src_size];
+	}
+	
+	return i;
+}
+
+static inline size_t plz_readint(byte_t *input, size_t input_size, size_t *output) {
+	size_t num = 0;
+	size_t i = 0;
+	
+	while (1) {
+		byte_t b = input[0];
+		num |= (b & 0x7f) << (7 * i);
+		
+		input++;
+		input_size--;
+		i++;
+		
+		if (!(b >> 7)) {
+			break;
+		}
+		else {
+			if (!input_size) {
+				return plz_failure;
+			}
+		}
+	}
+	
+	output[0] = num;
+	
+	return i;
+}
+
+#define READ_INT(V) {\
+	size_t status = plz_readint(input, input_size, &V);\
+	\
+	if (status == plz_failure) {\
+		return plz_failure;\
+	}\
+	\
+	i += status;\
+}
+
+size_t plz_decompress(byte_t *input, size_t input_size, byte_t *output, size_t output_size) {
+	size_t outpos = 0;
+	
+	for (size_t i = 0; i < input_size;) {
+		// Get literal length
+		size_t lit_len;
+		READ_INT(lit_len);
+		
+		// Check we have enough input and output
+		if ((input_size - i) < lit_len || (output_size - i) < lit_len) {
+			return plz_failure;
+		}
+		
+		// Copy the literals
+		plz_dcopy(input + i, input_size - i, output + outpos, lit_len);
+		i += lit_len;
+		outpos += lit_len;
+		
+		// Check if we're done
+		if (input_size == i) {
+			break;
+		}
+		
+		// Get match size and offset
+		size_t match_size, match_offset;
+		READ_INT(match_size);
+		READ_INT(match_offset);
+		
+		// Make sure the offset starts within bounds and the size isn't bigger
+		// than the buffer
 	}
 	
 	return outpos;
