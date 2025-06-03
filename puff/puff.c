@@ -24,24 +24,38 @@
  *   Literal data.
  */
 
+/**
+ * In memory buffer with length
+ */
 typedef struct {
 	size_t size;
 	uint8_t *data;
 } Buffer;
 
+/**
+ * Status codes which should be returned by Input::next() and Output::write()
+ */
 enum {
-	BUF_OK = 1,
-	BUF_FIN = 2,
-	BUF_ERR = 3,
+	IO_OK = 1,  // Okay, returned next block of data
+	IO_FIN = 2, // Okay, input is finished (no data block returned though)
+	IO_ERR = 3, // Error
 };
 
+/**
+ * Input stream that works by returning a buffer with at least one byte,
+ * allowing the callee to determine the exact amount and location of data that
+ * is returned. Note: The buffer structure may be modified between calls.
+ */
 typedef struct {
 	void *context;
-	int (*next_block)(void *context, Buffer *buffer);
+	int (*next)(void *context, Buffer *buffer);
 } Input;
 
-#define InputNext(INPUT, BUFFER) ((INPUT)->next_block((INPUT)->context, BUFFER))
+#define InputNext(INPUT, BUFFER) ((INPUT)->next((INPUT)->context, BUFFER))
 
+/**
+ * Output stream. This one's a bit more boring.
+ */
 typedef struct {
 	void *context;
 	int (*write)(void *context, Buffer *buffer);
@@ -49,80 +63,27 @@ typedef struct {
 
 #define OutputWrite(OUTPUT, BUFFER) ((OUTPUT)->write((OUTPUT)->context, BUFFER))
 
-typedef struct {
-	uint8_t *start;
-	uint8_t *end;
-	uint8_t *whead;
-	uint8_t *rhead;
-} CyclicBuffer;
-
-#define CyclicBufferSetup(THIS, BLOCK, SIZE) {\
-	(THIS)->start = BLOCK;\
-	(THIS)->end = (BLOCK) + SIZE;\
-	(THIS)->whead = BLOCK;\
-	(THIS)->rhead = BLOCK;\
-}
-
-inline void CyclicBufferWrite(CyclicBuffer *this, uint8_t byte) {
-	*this->whead = byte;
-	this->whead++;
+int copy_test(Input *input, Output *output) {
+	/**
+	 * Copy function for testing input and output stream implementation.
+	 */
 	
-	if (this->whead >= this->end) {
-		this->whead = this->start;
-	}
-	
-	// If the rhead is too slow, bump it
-	if (this->whead == this->rhead) {
-		this->rhead++;
-		
-		if (this->rhead > this->end) {
-			this->rhead = this->start;
-		}
-	}
-}
-
-inline uint8_t CyclicBufferConsume(CyclicBuffer *this) {
-	uint8_t b = *this->rhead;
-	
-	// Awaiting a write
-	if (this->rhead == this->whead) {
-		return -1;
-	}
-	
-	this->rhead++;
-	
-	if (this->rhead > this->end) {
-		this->rhead = this->start;
-	}
-	
-	return b;
-}
-
-inline uint8_t CyclicBufferPeek(CyclicBuffer *this, size_t i) {
-	uint8_t *ptr = this->rhead + i;
-	
-	if (ptr > this->end) {
-		ptr -= (size_t)(this->end - this->start);
-	}
-	
-	return *ptr;
-}
-
-void copy_test(Input *input, Output *output) {
 	Buffer buffer;
-	size_t buffer_progress;
-	CyclicBuffer cyclic_buffer;
-	uint8_t cyclic_buffer_mem[4096];
-	
-	CyclicBufferSetup(&cyclic_buffer, cyclic_buffer_mem, 4096);
 	
 	while (true) {
 		int status = InputNext(input, &buffer);
 		
-		if (status != BUF_OK) {
-			break;
+		if (status == IO_FIN) {
+			return 0;
+		}
+		else if (status == IO_ERR) {
+			return 1;
 		}
 		
+		status = OutputWrite(output, &buffer);
 		
+		if (status != IO_OK) {
+			return 2;
+		}
 	}
 }

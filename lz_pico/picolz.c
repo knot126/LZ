@@ -5,6 +5,8 @@
 #define byte_t unsigned char
 #endif
 
+#define plz_min(a, b) ((a) < (b) ? (a) : (b))
+
 #define plz_failure ((size_t) -1)
 
 static inline size_t plz_memcmp(byte_t *a, byte_t *b, size_t max_size) {
@@ -14,6 +16,18 @@ static inline size_t plz_memcmp(byte_t *a, byte_t *b, size_t max_size) {
 	
 	for (size_t i = 0; i < max_size; i++) {
 		if (a[i] != b[i]) {
+			// RLE style self referencing
+			#ifndef PLZ_DISABLE_REPEAT_BEHAVIOUR
+			if (i != 0) {
+				for (size_t j = i; j < max_size; j++) {
+					if (a[j % i] != b[j]) {
+						i += j;
+						break;
+					}
+				}
+			}
+			#endif
+			
 			return i;
 		}
 	}
@@ -33,7 +47,7 @@ static inline struct plz_match plz_find_match(byte_t *back, size_t back_size, by
 	struct plz_match m = {0, 0};
 	
 	for (size_t i = 0; i < back_size; i++) {
-		const size_t search_size = (back_size - i < front_size) ? (back_size - i) : front_size;
+		const size_t search_size = plz_min(back_size - i, front_size);
 		const size_t match_size = plz_memcmp(&back[i], front, search_size);
 		
 		if (match_size > m.len) {
@@ -226,6 +240,8 @@ size_t plz_decompress(byte_t *input, size_t input_size, byte_t *output, size_t o
 		
 		// Make sure the offset starts within bounds and the size isn't bigger
 		// than the buffer
+		
+		/// TODO TODO TODO FINISH THIS!!
 	}
 	
 	return outpos;
@@ -262,7 +278,8 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 	
-	fprintf(stderr, "Compressed %zu bytes to %zu bytes, %0.3f%% ratio.\n", in_size, out_size, 100.0f * (((float) out_size) / ((float) in_size)));
+	fprintf(stderr, "Compressed %zu bytes to %zu bytes.\n", in_size, out_size);
+	fprintf(stderr, "Ratio = %0.3f%%\n", 100.0f * (((float) out_size) / ((float) in_size)));
 	
 	if (!FUSave(argv[2], out_data, out_size)) {
 		fprintf(stderr, "Could not write to output file.\n");
