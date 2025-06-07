@@ -201,7 +201,7 @@ static inline size_t plz_readint(byte_t *input, size_t input_size, size_t *outpu
 }
 
 #define READ_INT(V) {\
-	size_t status = plz_readint(input, input_size, &V);\
+	size_t status = plz_readint(input + i, input_size - i, &V);\
 	\
 	if (status == plz_failure) {\
 		return plz_failure;\
@@ -215,7 +215,7 @@ size_t plz_decompress(byte_t *input, size_t input_size, byte_t *output, size_t o
 	
 	for (size_t i = 0; i < input_size;) {
 		// Get literal length
-		size_t lit_len;
+		size_t lit_len = 0;
 		READ_INT(lit_len);
 		
 		// Check we have enough input and output
@@ -234,7 +234,7 @@ size_t plz_decompress(byte_t *input, size_t input_size, byte_t *output, size_t o
 		}
 		
 		// Get match size and offset
-		size_t match_size, match_offset;
+		size_t match_size = 0, match_offset = 0;
 		READ_INT(match_size);
 		READ_INT(match_offset);
 		
@@ -247,10 +247,58 @@ size_t plz_decompress(byte_t *input, size_t input_size, byte_t *output, size_t o
 	return outpos;
 }
 
+#if defined(PLZ_TEST) && (PLZ_TEST == 2)
+
+#include <stdio.h>
+
+size_t plz_debug_describe_compressed_stream(byte_t *input, size_t input_size) {
+	/**
+	 * Describe the format of a compressed stream to stdout. Not bounds checked
+	 * or doing much validation!
+	 */
+	
+	size_t l;
+	
+	for (size_t i = 0; i < input_size;) {
+		size_t lit_len;
+		l = i;
+		
+		READ_INT(lit_len);
+		
+		printf("[%zu] %zu literal bytes\n", l, lit_len);
+		
+		i += lit_len;
+		
+		if (i == input_size) {
+			printf("end\n");
+			break;
+		}
+		
+		l = i;
+		
+		size_t match_len, match_offset;
+		
+		READ_INT(match_len);
+		READ_INT(match_offset);
+		
+		printf("[%zu] go back %zu and copy %zu bytes\n", l, match_offset, match_len);
+		
+		if (i == input_size) {
+			printf("end\n");
+			break;
+		}
+	}
+	
+	return 0;
+}
+
+#endif
+
 #ifdef PLZ_TEST
 #define FILE_UTILS_IMPLEMENTATION
 #include "FileUtils.h"
 
+#if PLZ_TEST == 1
 int main(int argc, char *argv[]) {
 	if (argc < 3) {
 		fprintf(stderr, "Too few arguments.\n");
@@ -288,4 +336,29 @@ int main(int argc, char *argv[]) {
 	
 	return 0;
 }
+#elif PLZ_TEST == 2
+int main(int argc, char *argv[]) {
+	if (argc < 2) {
+		fprintf(stderr, "Too few arguments.\n");
+		return 127;
+	}
+	
+	byte_t *in_data; size_t in_size;
+	
+	if (!FULoad(argv[1], (void **) &in_data, &in_size)) {
+		fprintf(stderr, "Could not open input file.\n");
+		return 1;
+	}
+	
+	size_t status = plz_debug_describe_compressed_stream(in_data, in_size);
+	
+	if (status == plz_failure) {
+		fprintf(stderr, "failed\n");
+		return 1;
+	}
+	
+	return 0;
+}
+#endif
+
 #endif

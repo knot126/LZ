@@ -87,3 +87,12 @@ int copy_test(Input *input, Output *output) {
 		}
 	}
 }
+
+typedef struct {
+	uint8_t *start;
+	size_t size;
+	size_t offset;
+} Ring;
+
+#define RingPush(CB, BYTE) (CB->start[ CB->offset++ % CB->size ] = BYTE)
+#define RingGet(CB, INDEX) (CB->start[ (CB->offset + INDEX) % CB->size ])
