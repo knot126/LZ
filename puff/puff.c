@@ -24,13 +24,20 @@
  *   Literal data.
  */
 
+#define Max(a, b) ( ((a) > (b)) ? (a) : (b) )
+#define Min(a, b) ( ((a) < (b)) ? (a) : (b) )
+
 /**
  * In memory buffer with length
  */
 typedef struct {
 	size_t size;
 	uint8_t *data;
+	size_t progress; // for internal use only when reading buffers, should
+	                 // be set to zero when reading new buffers.
 } Buffer;
+
+#define BufferEmpty(BUFFER) ( (BUFFER)->progress >= (BUFFER)->size )
 
 /**
  * Status codes which should be returned by Input::next() and Output::write()
@@ -48,7 +55,7 @@ enum {
  */
 typedef struct {
 	void *context;
-	int (*next)(void *context, Buffer *buffer);
+	int32_t (*next)(void *context, Buffer *buffer);
 } Input;
 
 #define InputNext(INPUT, BUFFER) ((INPUT)->next((INPUT)->context, BUFFER))
@@ -58,12 +65,12 @@ typedef struct {
  */
 typedef struct {
 	void *context;
-	int (*write)(void *context, Buffer *buffer);
+	int32_t (*write)(void *context, Buffer *buffer);
 } Output;
 
 #define OutputWrite(OUTPUT, BUFFER) ((OUTPUT)->write((OUTPUT)->context, BUFFER))
 
-int copy_test(Input *input, Output *output) {
+int32_t copy_test(Input *input, Output *output) {
 	/**
 	 * Copy function for testing input and output stream implementation.
 	 */
@@ -71,7 +78,7 @@ int copy_test(Input *input, Output *output) {
 	Buffer buffer;
 	
 	while (true) {
-		int status = InputNext(input, &buffer);
+		int32_t status = InputNext(input, &buffer);
 		
 		if (status == IO_FIN) {
 			return 0;
@@ -94,5 +101,74 @@ typedef struct {
 	size_t offset;
 } Ring;
 
+#define RingInit(CB, MEM, LEN) { (CB)->start = MEM; (CB)->size = LEN; (CB)->offset = 0; }
 #define RingPush(CB, BYTE) (CB->start[ CB->offset++ % CB->size ] = BYTE)
 #define RingGet(CB, INDEX) (CB->start[ (CB->offset + INDEX) % CB->size ])
+
+#define LookbackSize 65536
+#define LookaheadSize 1024
+#define RingSize (LookbackSize + LookaheadSize)
+
+typedef enum : uint8_t {
+	COMP_INITING = 1,
+	COMP_COMPRESSING = 2,
+} CompressState;
+
+int64_t compress(Input *input, Output *output) {
+	CompressState state = COMP_INITING;
+	Buffer buffer = {};
+	int32_t status = IO_OK;
+	
+	// Initialise the ring buffer
+	Ring ring; uint8_t _lookback[RingSize];
+	RingInit(&ring, _lookback, RingSize);
+	
+	// Fill the lookback with a common value (I prefer zero/nul)
+	for (size_t i = 0; i < LookbackSize; i++) {
+		_lookback[i] = 0;
+	}
+	
+	// The main loop and compressor state machine starts here
+	int_fast32_t initial_input_remaining = LookaheadSize; // tracking for the amount of lookahead buffer that is present at the start of compression
+	int_fast32_t lookahead_remaining = 0;
+	
+	while (true) {
+		if (BufferEmpty(&buffer)) {
+			status = InputNext(input, &buffer);
+		}
+		
+		switch (state) {
+			case COMP_INITING: {
+				if (status == IO_FIN) {
+					// Fill rest with zeros (not really needed, but probably
+					// helpful if there is ever an error)
+					for (size_t i = 0; i != LookaheadSize; i++) {
+						_lookback[lookahead_remaining + i] = 0;
+					}
+					
+					state = COMP_COMPRESSING;
+					break;
+				}
+				
+				// Read all possible input
+				size_t amt_copy = Min(LookaheadSize - lookahead_remaining, buffer.size - buffer.progress);
+				
+				for (size_t i = 0; i < amt_copy; i++) {
+					_lookback[LookbackSize + i] = buffer.data[buffer.progress + i];
+				}
+				
+				buffer.progress += amt_copy;
+				lookahead_remaining += amt_copy;
+				
+				if (lookahead_remaining == LookaheadSize) {
+					state = COMP_COMPRESSING;
+				}
+				
+				break;
+			}
+			case COMP_COMPRESSING: {
+				break;
+			}
+		}
+	}
+}
